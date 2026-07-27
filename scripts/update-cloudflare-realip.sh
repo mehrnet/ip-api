@@ -3,14 +3,13 @@ set -eu
 
 output_path="${1:-/etc/nginx/snippets/cloudflare-realip.conf}"
 output_dir=$(dirname "$output_path")
+mkdir -p "$output_dir"
 temp_path=$(mktemp "${output_path}.XXXXXX")
 
 cleanup() {
     rm -f "$temp_path"
 }
 trap cleanup EXIT INT TERM
-
-mkdir -p "$output_dir"
 
 {
     printf '%s\n' '# Generated from Cloudflare IP ranges. Do not edit by hand.'
