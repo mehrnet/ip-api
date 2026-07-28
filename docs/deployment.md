@@ -96,5 +96,5 @@ After both HTTPS endpoints are operational, update `mehrnet/bgp`:
 - IPv6 resolver: `https://ipv6.mehrnet.com`
 
 The browser should read the plain-text response, validate it, then request
-`https://bgp-api.mehrnet.com/v1/ip/{address}`. No API key, database change, or
+`https://bgp-api.mehrnet.com/v1/ip?query={address}`. No API key, database change, or
 deployment of `bgp-api` is involved.

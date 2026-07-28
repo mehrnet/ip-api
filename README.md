@@ -18,7 +18,7 @@ and its daily dataset workflow.
 ```text
 Browser
   |-- ipv4.mehrnet.com / ipv6.mehrnet.com --> ip-api (Nginx, address only)
-  `-- bgp-api.mehrnet.com/v1/ip/{address} --> bgp-api (Go + PostgreSQL, BGP data)
+  `-- bgp-api.mehrnet.com/v1/ip?query={address} --> bgp-api (Go + PostgreSQL, BGP data)
 
 bgp.mehrnet.com
   `-- static frontend: resolves a visitor address, then requests the BGP lookup
