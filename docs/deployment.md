@@ -37,7 +37,8 @@ sudo ./install.sh --family ipv4 --bootstrap-only
 ```
 
 After the DNS-only record resolves to that host, rerun the first command with
-`--email` to issue the certificate and activate HTTPS.
+`--email` to issue the certificate and add HTTPS. The HTTP responder remains
+active and returns the same direct peer address without redirecting callers.
 
 The installer first enables an HTTP-only ACME challenge vhost, obtains a
 certificate with Certbot's webroot authenticator, and activates the repository
