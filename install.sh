@@ -7,6 +7,7 @@ readonly NGINX_SNIPPET_DIR=/etc/nginx/snippets
 readonly NGINX_CONF_DIR=/etc/nginx/conf.d
 readonly NGINX_SITE_DIR=/etc/nginx/sites-available
 readonly NGINX_ENABLED_DIR=/etc/nginx/sites-enabled
+readonly NGINX_DEFAULT_SITE="$NGINX_ENABLED_DIR/default"
 readonly ACME_ROOT=/var/lib/mehrnet-ip-api/acme
 readonly RENEWAL_HOOK=/etc/letsencrypt/renewal-hooks/deploy/mehrnet-ip-api-reload
 
@@ -29,6 +30,23 @@ EOF
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
+
+activate_nginx() {
+    systemctl enable nginx
+    if systemctl is-active --quiet nginx; then
+        systemctl reload nginx
+    else
+        systemctl start nginx
+    fi
+}
+
+disable_debian_default_site() {
+    # This project is a dedicated responder. Preserve Debian's stock vhost so
+    # its default listener settings cannot override the responder listener.
+    if [ -L "$NGINX_DEFAULT_SITE" ] && [ "$(readlink -f "$NGINX_DEFAULT_SITE")" = "$NGINX_SITE_DIR/default" ]; then
+        mv "$NGINX_DEFAULT_SITE" "$NGINX_ENABLED_DIR/default.disabled-by-mehrnet-ip-api"
+    fi
+}
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -63,6 +81,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 
 step "Installing direct responder configuration"
 install -d -m 0755 "$NGINX_SNIPPET_DIR" "$NGINX_CONF_DIR" "$ACME_ROOT" "$(dirname "$RENEWAL_HOOK")"
+disable_debian_default_site
 install -m 0644 "$ROOT_DIR/nginx/http-limits.conf" "$NGINX_CONF_DIR/mehrnet-ip-api-limits.conf"
 install -m 0644 "$ROOT_DIR/nginx/ip-response.conf" "$NGINX_SNIPPET_DIR/mehrnet-ip-response.conf"
 install -m 0644 "$ROOT_DIR/sysctl/60-mehrnet-ip-api.conf" /etc/sysctl.d/60-mehrnet-ip-api.conf
@@ -79,7 +98,7 @@ if [ ! -s "$certificate" ]; then
     install -m 0644 "$bootstrap" "$site"
     ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
     nginx -t
-    systemctl enable --now nginx
+    activate_nginx
 
     if [ "$bootstrap_only" -eq 1 ]; then
         printf '\n%s HTTP bootstrap is active. Point the matching DNS-only record here, then rerun with --email to enable HTTPS.\n' "$domain"
@@ -96,7 +115,7 @@ step "Activating the HTTPS responder"
 install -m 0644 "$final" "$site"
 ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
 nginx -t
-systemctl enable --now nginx
+activate_nginx
 systemctl enable --now certbot.timer 2>/dev/null || true
 
 step "Verifying local responder"
