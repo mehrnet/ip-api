@@ -1,125 +1,97 @@
 # ip-api
 
-Minimal public IPv4 and IPv6 address responders for MehrNet.
-
-The deployed endpoints return only the caller address as plain text with a
-trailing newline:
+Minimal, DNS-only address-family responders for MehrNet.
 
 ```text
-https://ipv4.mehrnet.com
-https://ipv6.mehrnet.com
+https://ipv4.mehrnet.com  -> caller IPv4 address and newline
+https://ipv6.mehrnet.com  -> caller IPv6 address and newline
 ```
 
-They are intentionally independent of the BGP API, its Go binary, PostgreSQL,
-and its daily dataset workflow.
-
-## Role in MehrNet
-
-```text
-Browser
-  |-- ipv4.mehrnet.com / ipv6.mehrnet.com --> ip-api (Nginx, address only)
-  `-- bgp-api.mehrnet.com/v1/ip?query={address} --> bgp-api (Go + PostgreSQL, BGP data)
-
-bgp.mehrnet.com
-  `-- static frontend: resolves a visitor address, then requests the BGP lookup
-```
-
-| Repository | Responsibility |
-| --- | --- |
-| [`mehrnet/bgp`](https://github.com/mehrnet/bgp) | Static public UI at `bgp.mehrnet.com`; temporarily resolves addresses through IPify, then calls `bgp-api`. |
-| [`mehrnet/bgp-api`](https://github.com/mehrnet/bgp-api) | Go/PostgreSQL BGP, RIR, route, ASN, and geofeed lookup service. |
-| `mehrnet/ip-api` | This repository: independent, stateless IPv4/IPv6 responder configuration. |
-
-Once these responders are live, `bgp` should replace its temporary IPify URLs
-with the MehrNet responder URLs. No change to `bgp-api` is required.
+The runtime is stock Nginx. There is no application process, database,
+container, proxy-header trust, or request-time dependency.
 
 ## Contract
 
-`GET /` returns a UTF-8 plain-text address and newline:
-
-```text
-203.0.113.42
-```
-
-or:
-
-```text
-2001:db8::42
-```
-
-The response includes:
-
-- `Content-Type: text/plain`
-- `Cache-Control: no-store`
-- `Access-Control-Allow-Origin: *`
-
-Only `GET` and `HEAD` are accepted. Other paths return `404`; other methods on
+`GET /` and `HEAD /` return `text/plain; charset=utf-8`, the direct TCP peer
+address, and a trailing newline. Other paths return `404`; other methods on
 `/` return `405`.
 
-## Deployment
+Responses include `Cache-Control: no-store` and permissive CORS so the public
+[`mehrnet/bgp`](https://github.com/mehrnet/bgp) frontend can resolve an address
+before calling `bgp-api`.
 
-Detailed instructions are in [docs/deployment.md](docs/deployment.md). The
-short version is:
+## DNS Requirement
 
-```sh
-sudo install -d -m 0755 /etc/nginx/snippets
-sudo install -m 0644 nginx/ip-response.conf /etc/nginx/snippets/mehrnet-ip-response.conf
-sudo install -m 0644 nginx/ipv4.mehrnet.com.conf /etc/nginx/sites-available/
-sudo ln -s ../sites-available/ipv4.mehrnet.com.conf /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
+These endpoints must be **DNS-only**. A reverse proxy cannot preserve strict
+address-family semantics because it becomes the browser's network peer.
 
-Deploy `ipv4.mehrnet.com` on an IPv4-capable origin and `ipv6.mehrnet.com` on
-an IPv6-capable origin. They may be separate servers. The current BGP API host
-has no public IPv6 address, so it cannot provide the IPv6 responder.
+| Hostname | DNS record | Do not publish |
+| --- | --- | --- |
+| `ipv4.mehrnet.com` | one `A` record | `AAAA` |
+| `ipv6.mehrnet.com` | one `AAAA` record | `A` |
 
-## Cloudflare and DNS
+Use separate origins when necessary. An IPv4-only server cannot host the IPv6
+responder, and vice versa.
 
-For actual family-specific behavior, use DNS-only records:
+## Install
 
-- `ipv4.mehrnet.com`: one `A` record, no `AAAA` record.
-- `ipv6.mehrnet.com`: one `AAAA` record, no `A` record.
-
-An orange-cloud Cloudflare hostname presents both Cloudflare anycast address
-families, so Nginx cannot guarantee that `ipv4` receives only IPv4 callers or
-that `ipv6` receives only IPv6 callers. Cloudflare proxying is acceptable only
-when this family distinction is not required.
-
-When proxying through Cloudflare, generate the trusted proxy list before
-enabling the real-IP include:
+The installer supports Debian 12 and installs one responder per host. The
+matching DNS record must point to that host before certificate issuance.
 
 ```sh
-sudo install -m 0755 scripts/update-cloudflare-realip.sh /usr/local/sbin/
-sudo /usr/local/sbin/update-cloudflare-realip.sh
+git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
+sudo /srv/ip-api/install.sh --family ipv4 --email admin@mehrnet.com
 ```
 
-Then uncomment the `cloudflare-realip.conf` include in the relevant server
-configuration. Never trust `CF-Connecting-IP` from arbitrary direct clients.
+To provision a host before its DNS record is moved, install the HTTP bootstrap
+first, then rerun the command with `--email` after the record is live:
 
-## Verification
+```sh
+sudo /srv/ip-api/install.sh --family ipv4 --bootstrap-only
+```
 
-Run the checks from a dual-stack machine after DNS and TLS are configured:
+On the IPv6-capable host:
+
+```sh
+git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
+sudo /srv/ip-api/install.sh --family ipv6 --email admin@mehrnet.com
+```
+
+The installer configures Nginx, Let's Encrypt renewal, modest per-address
+request and connection limits, 4,096-connection listen backlogs, and a
+low-CPU persistent zram safety net suitable for a 1 GiB host.
+
+## Update
+
+```sh
+cd /srv/ip-api
+git pull --ff-only
+sudo ./install.sh --family ipv4 --email admin@mehrnet.com
+```
+
+Use `--family ipv6` on the IPv6 origin. The script is idempotent and preserves
+an existing certificate.
+
+## Verify
+
+Run these from a dual-stack machine after both responders are installed:
 
 ```sh
 curl -4fsS https://ipv4.mehrnet.com
 curl -6fsS https://ipv6.mehrnet.com
-curl -i -X POST https://ipv4.mehrnet.com/
+curl -si -X POST https://ipv4.mehrnet.com/
 ```
 
-The first command must return an IPv4 address, the second an IPv6 address, and
-the final command must return `405`.
+The first two commands must return their corresponding address families; the
+last must return `405`.
 
-## Operations
+## Role in MehrNet
 
-Nginx is the only runtime. Inspect its logs and configuration with:
+| Repository | Responsibility |
+| --- | --- |
+| [`mehrnet/bgp`](https://github.com/mehrnet/bgp) | Static public UI. It temporarily uses IPify until both responders are live. |
+| [`mehrnet/bgp-api`](https://github.com/mehrnet/bgp-api) | Read-only IP intelligence API backed by bbolt. |
+| `mehrnet/ip-api` | This direct address responder service. |
 
-```sh
-sudo nginx -t
-sudo systemctl status nginx
-sudo journalctl -u nginx -f
-```
-
-Refresh the Cloudflare trusted-proxy ranges periodically only if Cloudflare
-proxying is enabled. For DNS-only family-specific responders, no real-IP proxy
-configuration is needed.
+After deployment, update `bgp` to fetch `https://ipv4.mehrnet.com` and
+`https://ipv6.mehrnet.com` instead of IPify.

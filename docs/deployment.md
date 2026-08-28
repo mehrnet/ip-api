@@ -1,100 +1,74 @@
 # Deployment
 
-`ip-api` has no application process, database, build artifact, or release
-sync. It is an Nginx configuration deployed independently from `bgp-api`.
+`ip-api` is deliberately a DNS-only Nginx service. It returns the direct TCP
+peer with `$remote_addr`; no `CF-Connecting-IP`, `X-Forwarded-For`, or proxy
+trust configuration is present.
 
-## 1. Provision network paths
+## Prerequisites
 
-Provision these independently:
+- Debian 12
+- A public IPv4 origin for `ipv4.mehrnet.com`, or a public IPv6 origin for
+  `ipv6.mehrnet.com`
+- Ports `80` and `443` reachable for the deployed address family
+- A DNS-only record already pointing at that origin
+- An email address for Let's Encrypt expiry notices
 
-| Service | Required origin connectivity | DNS record |
-| --- | --- | --- |
-| `ipv4.mehrnet.com` | Public IPv4 | `A` only |
-| `ipv6.mehrnet.com` | Public IPv6 | `AAAA` only |
+Do not proxy either responder through Cloudflare. In particular, Cloudflare's
+zone-wide IPv6 compatibility prevents a proxied hostname from being a strict
+IPv4-only browser destination.
 
-Do not create an `AAAA` record for the IPv4 service or an `A` record for the
-IPv6 service. Keep both records DNS-only when you need strict address-family
-semantics.
-
-## 2. Install Nginx
-
-On each relevant origin:
-
-```sh
-sudo apt-get update
-sudo apt-get install -y nginx curl
-sudo systemctl enable --now nginx
-```
-
-## 3. Install the shared responder location
+## Provision
 
 ```sh
-sudo install -d -m 0755 /etc/nginx/snippets
-sudo install -m 0644 nginx/ip-response.conf /etc/nginx/snippets/mehrnet-ip-response.conf
+git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
+cd /srv/ip-api
+sudo ./install.sh --family ipv4 --email admin@mehrnet.com
 ```
 
-## 4. Install the correct virtual host
-
-On the IPv4 origin:
+For a new origin whose DNS has not been moved yet, use the bootstrap mode. It
+starts the direct HTTP responder and applies the Nginx, sysctl, and zram
+configuration without contacting Let's Encrypt:
 
 ```sh
-sudo install -m 0644 nginx/ipv4.mehrnet.com.conf /etc/nginx/sites-available/
-sudo ln -s ../sites-available/ipv4.mehrnet.com.conf /etc/nginx/sites-enabled/
+sudo ./install.sh --family ipv4 --bootstrap-only
 ```
 
-On the IPv6 origin:
+After the DNS-only record resolves to that host, rerun the first command with
+`--email` to issue the certificate and activate HTTPS.
 
-```sh
-sudo install -m 0644 nginx/ipv6.mehrnet.com.conf /etc/nginx/sites-available/
-sudo ln -s ../sites-available/ipv6.mehrnet.com.conf /etc/nginx/sites-enabled/
-```
+The installer first enables an HTTP-only ACME challenge vhost, obtains a
+certificate with Certbot's webroot authenticator, and activates the repository
+TLS vhost. Certbot renewal uses the same webroot; its deploy hook validates and
+reloads Nginx after a successful renewal.
 
-Disable any conflicting default Nginx site, then validate and reload:
+For an IPv6 origin, replace `ipv4` with `ipv6`. Do not install both roles on a
+host lacking either public address family.
+
+## Resource Profile
+
+The service uses one Nginx worker on a one-vCPU Debian host (`worker_processes
+auto` resolves to one), has no upstream application, and disables access logs.
+The only per-request work is HTTP/TLS handling, the direct peer lookup, and a
+small plaintext response.
+
+`systemd-zram-generator` creates a 512 MiB logical zram device on a 1 GiB host
+with `lzo-rle` compression. It is an OOM safety net; normal response handling
+does not depend on swap.
+
+The Nginx request limit is per source address (`30r/s`, burst `60`) and the
+connection limit is `16` per source address. These values allow normal browser
+and programmatic use while containing a single source. They are not a
+substitute for upstream network DDoS protection.
+
+## Operations
 
 ```sh
 sudo nginx -t
-sudo systemctl reload nginx
+sudo systemctl status nginx systemd-zram-setup@zram0.service certbot.timer
+sudo zramctl
+sudo journalctl -u nginx -u certbot.timer -f
 ```
 
-## 5. Enable TLS
-
-Use the certificate tooling appropriate to the host. With Certbot and a
-reachable HTTP-01 path:
-
-```sh
-sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d ipv4.mehrnet.com
-sudo certbot --nginx -d ipv6.mehrnet.com
-```
-
-For an IPv6-only origin, DNS-01 validation may be more practical if the
-certificate authority cannot reach the HTTP-01 challenge over the published
-address family.
-
-## Optional: Cloudflare proxy mode
-
-Cloudflare proxy mode does not preserve a strict IPv4-only or IPv6-only DNS
-service because its edge advertises both address families. Use it only if a
-generic "show my IP" endpoint is acceptable.
-
-If proxy mode is enabled, trust only Cloudflare's published origin ranges:
-
-```sh
-sudo install -m 0755 scripts/update-cloudflare-realip.sh /usr/local/sbin/
-sudo /usr/local/sbin/update-cloudflare-realip.sh
-```
-
-Uncomment the real-IP include in the relevant vhost, then validate/reload
-Nginx. Re-run the script periodically with a systemd timer or configuration
-management system.
-
-## Connect the BGP frontend
-
-After both HTTPS endpoints are operational, update `mehrnet/bgp`:
-
-- IPv4 resolver: `https://ipv4.mehrnet.com`
-- IPv6 resolver: `https://ipv6.mehrnet.com`
-
-The browser should read the plain-text response, validate it, then request
-`https://bgp-api.mehrnet.com/v1/ip?query={address}`. No API key, database change, or
-deployment of `bgp-api` is involved.
+Only expose `80` and `443` publicly. Restrict SSH to a management network or
+WireGuard. Keep the two responder origins separate from stateful services when
+possible: DNS-only records reveal the origin address by design.
