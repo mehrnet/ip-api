@@ -39,6 +39,8 @@ The installer supports Debian 12 and installs one responder per host. The
 matching DNS record must point to that host before certificate issuance.
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends git
 git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
 sudo /srv/ip-api/install.sh --family ipv4 --email admin@mehrnet.com
 ```
@@ -53,6 +55,8 @@ sudo /srv/ip-api/install.sh --family ipv4 --bootstrap-only
 On the IPv6-capable host:
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends git
 git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
 sudo /srv/ip-api/install.sh --family ipv6 --email admin@mehrnet.com
 ```

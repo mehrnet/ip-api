@@ -11,6 +11,7 @@ trust configuration is present.
   `ipv6.mehrnet.com`
 - Ports `80` and `443` reachable for the deployed address family
 - A DNS-only record already pointing at that origin
+- Git for the initial repository checkout
 - An email address for Let's Encrypt expiry notices
 
 Do not proxy either responder through Cloudflare. In particular, Cloudflare's
@@ -20,6 +21,8 @@ IPv4-only browser destination.
 ## Provision
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends git
 git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
 cd /srv/ip-api
 sudo ./install.sh --family ipv4 --email admin@mehrnet.com
