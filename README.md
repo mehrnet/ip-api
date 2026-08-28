@@ -3,8 +3,8 @@
 Minimal, DNS-only address-family responders for MehrNet.
 
 ```text
-http://ipv4.mehrnet.com and https://ipv4.mehrnet.com  -> caller IPv4 address and newline
-http://ipv6.mehrnet.com and https://ipv6.mehrnet.com  -> caller IPv6 address and newline
+http://ipv4.mehrnet.com and https://ipv4.mehrnet.com  -> caller IPv4 address
+http://ipv6.mehrnet.com and https://ipv6.mehrnet.com  -> caller IPv6 address
 ```
 
 The runtime is stock Nginx. There is no application process, database,
@@ -13,8 +13,8 @@ container, proxy-header trust, or request-time dependency.
 ## Contract
 
 `GET /` and `HEAD /` return `text/plain; charset=utf-8`, the direct TCP peer
-address, and a trailing newline over either HTTP or HTTPS. Other paths return
-`404`; other methods on `/` return `405`.
+address over either HTTP or HTTPS. Other paths return `404`; other methods on
+`/` return `405`.
 
 Responses include `Cache-Control: no-store` and permissive CORS so the public
 [`mehrnet/bgp`](https://github.com/mehrnet/bgp) frontend can resolve an address
