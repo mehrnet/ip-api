@@ -11,7 +11,6 @@ trust configuration is present.
   `ipv6.mehrnet.com`
 - Ports `80` and `443` reachable for the deployed address family
 - A DNS-only record already pointing at that origin
-- Git for the initial repository checkout
 - An email address for Let's Encrypt expiry notices
 
 Do not proxy either responder through Cloudflare. In particular, Cloudflare's
@@ -21,11 +20,8 @@ IPv4-only browser destination.
 ## Provision
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends git
-git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
-cd /srv/ip-api
-sudo ./install.sh --family ipv4 --email admin@mehrnet.com
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family ipv4 --email admin@mehrnet.com
 ```
 
 For a new origin whose DNS has not been moved yet, use the bootstrap mode. It
@@ -33,7 +29,8 @@ starts the direct HTTP responder and applies the Nginx, sysctl, and zram
 configuration without contacting Let's Encrypt:
 
 ```sh
-sudo ./install.sh --family ipv4 --bootstrap-only
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family ipv4 --bootstrap-only
 ```
 
 After the DNS-only record resolves to that host, rerun the first command with
@@ -47,6 +44,21 @@ reloads Nginx after a successful renewal.
 
 For an IPv6 origin, replace `ipv4` with `ipv6`. Do not install both roles on a
 host lacking either public address family.
+
+## Update and removal
+
+The installer is retained as `/usr/local/sbin/mehrnet-ip-api`, so a checked-out
+repository is never needed after provisioning:
+
+```sh
+sudo /usr/local/sbin/mehrnet-ip-api --update
+sudo /usr/local/sbin/mehrnet-ip-api --uninstall
+```
+
+The update resolves and downloads one exact GitHub commit before it changes the
+live configuration. Supply `--auto-update` at initial installation to schedule
+that update daily at 05:30 UTC. Removal leaves the Nginx and Certbot packages,
+as well as any issued certificate, in place.
 
 ## Resource Profile
 

@@ -35,14 +35,14 @@ responder, and vice versa.
 
 ## Install
 
-The installer supports Debian 12 and installs one responder per host. The
-matching DNS record must point to that host before certificate issuance.
+The single-file installer supports Debian 12 and installs one responder per
+host. It downloads a pinned set of Nginx assets from this repository; no Git
+checkout is required. The matching DNS record must point to that host before
+certificate issuance.
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends git
-git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
-sudo /srv/ip-api/install.sh --family ipv4 --email admin@mehrnet.com
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family ipv4 --email admin@mehrnet.com
 ```
 
 To provision a host before its DNS record is moved, install the HTTP responder
@@ -50,16 +50,15 @@ first, then rerun the command with `--email` after the record is live to add
 HTTPS:
 
 ```sh
-sudo /srv/ip-api/install.sh --family ipv4 --bootstrap-only
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family ipv4 --bootstrap-only
 ```
 
 On the IPv6-capable host:
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends git
-git clone https://github.com/mehrnet/ip-api.git /srv/ip-api
-sudo /srv/ip-api/install.sh --family ipv6 --email admin@mehrnet.com
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family ipv6 --email admin@mehrnet.com
 ```
 
 The installer configures Nginx, Let's Encrypt renewal, modest per-address
@@ -69,13 +68,29 @@ low-CPU persistent zram safety net suitable for a 1 GiB host.
 ## Update
 
 ```sh
-cd /srv/ip-api
-git pull --ff-only
-sudo ./install.sh --family ipv4 --email admin@mehrnet.com
+sudo /usr/local/sbin/mehrnet-ip-api --update
 ```
 
-Use `--family ipv6` on the IPv6 origin. The script is idempotent and preserves
-an existing certificate.
+The update reuses the installed family and certificate. It can also be run
+without keeping the local script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --update
+```
+
+Add `--auto-update` during installation to run the same update at 05:30 UTC
+each day.
+
+## Uninstall
+
+```sh
+sudo /usr/local/sbin/mehrnet-ip-api --uninstall
+```
+
+This removes the MehrNet-managed Nginx, sysctl, zram, renewal-hook, and cron
+configuration. It leaves Nginx, Certbot, and any already-issued certificate in
+place.
 
 ## Verify
 
