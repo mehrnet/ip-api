@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install, update, or remove a DNS-only MehrNet address-family responder.
+# Install, update, or remove DNS-only MehrNet address-family responders.
 set -Eeuo pipefail
 
 readonly REPOSITORY="${MEHRNET_IP_API_REPOSITORY:-mehrnet/ip-api}"
@@ -32,12 +32,12 @@ usage() {
 Install, update, or remove the MehrNet direct IP responder.
 
 Usage:
-  install.sh --family ipv4|ipv6 [--email admin@example.com] [--bootstrap-only] [--auto-update]
+  install.sh --family ipv4|ipv6|dual-stack [--email admin@example.com] [--bootstrap-only] [--auto-update]
   install.sh --update
   install.sh --uninstall
 
 Options:
-  --family NAME       One address-family responder: ipv4 or ipv6.
+  --family NAME       Responder deployment: ipv4, ipv6, or dual-stack.
   --email ADDRESS     Let's Encrypt expiry-notice address. Required unless bootstrapping.
   --bootstrap-only    Serve HTTP only until the DNS-only record points to this host.
   --auto-update       Update the installed Nginx configuration every day at 05:30 UTC.
@@ -54,7 +54,7 @@ EOF
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --family)
-            [ "$#" -ge 2 ] || die "--family requires ipv4 or ipv6"
+            [ "$#" -ge 2 ] || die "--family requires ipv4, ipv6, or dual-stack"
             family="${2,,}"
             shift 2
             ;;
@@ -90,8 +90,8 @@ if [ "$ACTION" != install ] && { [ -n "$family" ] || [ -n "$email" ] || [ "$boot
 fi
 
 case "$family" in
-    ""|ipv4|ipv6) ;;
-    *) die "--family must be ipv4 or ipv6" ;;
+    ""|ipv4|ipv6|dual-stack) ;;
+    *) die "--family must be ipv4, ipv6, or dual-stack" ;;
 esac
 
 github_api() {
@@ -115,6 +115,7 @@ install_base_packages() {
     for command in certbot curl jq nginx systemctl; do
         command -v "$command" >/dev/null 2>&1 || missing=true
     done
+    dpkg-query -W -f='${db:Status-Status}' systemd-zram-generator 2>/dev/null | grep -qx installed || missing=true
     [ "$missing" = false ] && return
     step "Installing Nginx, Certbot, and persistent zram"
     apt-get update
@@ -170,9 +171,35 @@ load_configuration() {
     bootstrap_only="${BOOTSTRAP_ONLY:-false}"
     auto_update="${AUTO_UPDATE:-false}"
     case "$family" in
-        ipv4|ipv6) ;;
+        ipv4|ipv6|dual-stack) ;;
         *) die "installed configuration has an invalid family" ;;
     esac
+}
+
+families() {
+    case "$family" in
+        ipv4) printf '%s\n' ipv4 ;;
+        ipv6) printf '%s\n' ipv6 ;;
+        dual-stack) printf '%s\n' ipv4 ipv6 ;;
+        *) die "invalid responder family: $family" ;;
+    esac
+}
+
+responder_variables() {
+    local responder_family="$1"
+    case "$responder_family" in
+        ipv4)
+            domain=ipv4.mehrnet.com
+            local_address=127.0.0.1
+            ;;
+        ipv6)
+            domain=ipv6.mehrnet.com
+            local_address='[::1]'
+            ;;
+        *) die "invalid responder family: $responder_family" ;;
+    esac
+    site="$NGINX_SITE_DIR/$domain"
+    certificate="/etc/letsencrypt/live/$domain/fullchain.pem"
 }
 
 write_configuration() {
@@ -210,13 +237,13 @@ download_configuration() {
 }
 
 remove_installation() {
+    local responder_family
     load_configuration
-    case "$family" in
-        ipv4) domain=ipv4.mehrnet.com ;;
-        ipv6) domain=ipv6.mehrnet.com ;;
-    esac
     step "Removing the MehrNet $family responder"
-    rm -f "$NGINX_ENABLED_DIR/$domain" "$NGINX_SITE_DIR/$domain"
+    while IFS= read -r responder_family; do
+        responder_variables "$responder_family"
+        rm -f "$NGINX_ENABLED_DIR/$domain" "$NGINX_SITE_DIR/$domain"
+    done < <(families)
     rm -f "$NGINX_CONF_DIR/mehrnet-ip-api-limits.conf" "$NGINX_SNIPPET_DIR/mehrnet-ip-response.conf"
     rm -f /etc/sysctl.d/60-mehrnet-ip-api.conf /etc/systemd/zram-generator.conf "$RENEWAL_HOOK" "$CRON_FILE"
     rm -rf "$ACME_ROOT" "$INSTALL_DIR" "$CONFIG_DIR"
@@ -226,7 +253,7 @@ remove_installation() {
     systemctl daemon-reload
     nginx -t
     activate_nginx
-    printf '\n%s was removed. Nginx, Certbot, and any existing certificate were left installed.\n' "$domain"
+    printf '\nThe %s responder deployment was removed. Nginx, Certbot, and any existing certificate were left installed.\n' "$family"
 }
 
 if [ "$ACTION" = uninstall ]; then
@@ -242,13 +269,6 @@ else
         die "--email is required unless --bootstrap-only is used"
     fi
 fi
-
-case "$family" in
-    ipv4) domain=ipv4.mehrnet.com; local_address=127.0.0.1 ;;
-    ipv6) domain=ipv6.mehrnet.com; local_address='[::1]' ;;
-esac
-site="$NGINX_SITE_DIR/$domain"
-certificate="/etc/letsencrypt/live/$domain/fullchain.pem"
 
 install_base_packages
 work_dir="$(mktemp -d)"
@@ -273,30 +293,41 @@ sysctl --load /etc/sysctl.d/60-mehrnet-ip-api.conf
 systemctl daemon-reload
 systemctl start /dev/zram0 2>/dev/null || true
 
-if [ ! -s "$certificate" ]; then
-    step "Starting the HTTP challenge vhost"
-    install -m 0644 "$work_dir/nginx/$domain.bootstrap.conf" "$site"
-    ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
-    nginx -t
-    activate_nginx
-
-    if [ "$bootstrap_only" = true ]; then
-        write_configuration
-        if [ "$auto_update" = true ]; then install_cron; fi
-        printf '\n%s HTTP bootstrap is active. Point the matching DNS-only record here, then rerun with --email to enable HTTPS.\n' "$domain"
-        exit 0
+for responder_family in $(families); do
+    responder_variables "$responder_family"
+    if [ "$bootstrap_only" = true ] || [ ! -s "$certificate" ]; then
+        step "Starting the HTTP challenge vhost for $domain"
+        install -m 0644 "$work_dir/nginx/$domain.bootstrap.conf" "$site"
+        ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
     fi
+done
+nginx -t
+activate_nginx
 
-    step "Obtaining the TLS certificate for $domain"
-    certbot certonly --webroot --webroot-path "$ACME_ROOT" \
-        --non-interactive --agree-tos --email "$email" --keep-until-expiring \
-        --domain "$domain"
+if [ "$bootstrap_only" = true ]; then
+    write_configuration
+    if [ "$auto_update" = true ]; then install_cron; fi
+    printf '\n%s HTTP bootstrap is active. Point every matching DNS-only record here, then rerun with --email to enable HTTPS.\n' "$family"
+    exit 0
 fi
+
+for responder_family in $(families); do
+    responder_variables "$responder_family"
+    if [ ! -s "$certificate" ]; then
+        step "Obtaining the TLS certificate for $domain"
+        certbot certonly --webroot --webroot-path "$ACME_ROOT" \
+            --non-interactive --agree-tos --email "$email" --keep-until-expiring \
+            --domain "$domain"
+    fi
+done
 
 step "Activating the HTTP and HTTPS responder"
 bootstrap_only=false
-install -m 0644 "$work_dir/nginx/$domain.conf" "$site"
-ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
+for responder_family in $(families); do
+    responder_variables "$responder_family"
+    install -m 0644 "$work_dir/nginx/$domain.conf" "$site"
+    ln -sfn "../sites-available/$domain" "$NGINX_ENABLED_DIR/$domain"
+done
 nginx -t
 activate_nginx
 systemctl enable --now certbot.timer 2>/dev/null || true
@@ -304,7 +335,10 @@ write_configuration
 if [ "$auto_update" = true ]; then install_cron; fi
 
 step "Verifying local responder"
-curl --noproxy '*' --fail --silent --show-error \
-    --resolve "$domain:443:$local_address" "https://$domain/" >/dev/null
-printf '\n%s is installed from %s. Verify with: curl -%sfsS https://%s\n' \
-    "$domain" "$source_sha" "$([ "$family" = ipv4 ] && printf 4 || printf 6)" "$domain"
+for responder_family in $(families); do
+    responder_variables "$responder_family"
+    curl --noproxy '*' --fail --silent --show-error \
+        --resolve "$domain:443:$local_address" "https://$domain/" >/dev/null
+done
+printf '\n%s is installed from %s. Verify with: curl -4fsS https://ipv4.mehrnet.com; curl -6fsS https://ipv6.mehrnet.com\n' \
+    "$family" "$source_sha"

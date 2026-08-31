@@ -36,10 +36,10 @@ not add `CF-Connecting-IP`, `X-Forwarded-For`, or real-IP trust configuration.
 Those changes would make the service depend on proxy behavior and would break
 strict IPv4-only or IPv6-only discovery in browsers.
 
-Each installer-managed deployment handles one address family. Use separate
-deployments for the IPv4 and IPv6 roles; this installer does not manage both
-roles on one host. The matching DNS record must resolve to the host before
-HTTPS can be issued.
+Use `--family ipv4` or `--family ipv6` for a single-stack origin. On a host
+with both public address families, use `--family dual-stack` to manage both
+responders, certificates, updates, and removal as one deployment. Every
+matching DNS record must resolve to the host before HTTPS can be issued.
 
 ## Install
 
@@ -59,6 +59,13 @@ Install the IPv6 responder with the corresponding hostname and certificate:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
   sudo bash -s -- --family ipv6 --email admin@mehrnet.com
+```
+
+Install both responders on one dual-stack host:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family dual-stack --email admin@mehrnet.com --auto-update
 ```
 
 For a host whose DNS record has not been moved yet, start with the HTTP-only

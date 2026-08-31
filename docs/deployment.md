@@ -7,8 +7,8 @@ trust configuration is present.
 ## Prerequisites
 
 - Debian 12
-- A public IPv4 origin for `ipv4.mehrnet.com`, or a public IPv6 origin for
-  `ipv6.mehrnet.com`
+- A public IPv4 origin for `ipv4.mehrnet.com`, a public IPv6 origin for
+  `ipv6.mehrnet.com`, or both on the same dual-stack host
 - Ports `80` and `443` reachable for the deployed address family
 - A DNS-only record already pointing at that origin
 - An email address for Let's Encrypt expiry notices
@@ -43,7 +43,16 @@ TLS vhost. Certbot renewal uses the same webroot; its deploy hook validates and
 reloads Nginx after a successful renewal.
 
 For an IPv6 origin, replace `ipv4` with `ipv6`. Do not install both roles on a
-host lacking either public address family.
+host lacking either public address family. A host with both public address
+families uses one lifecycle-managed deployment:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mehrnet/ip-api/main/install.sh |
+  sudo bash -s -- --family dual-stack --email admin@mehrnet.com --auto-update
+```
+
+`dual-stack` writes both vhosts, obtains an independent certificate for each
+hostname, and updates or removes both responders together.
 
 ## Update and removal
 
